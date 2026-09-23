@@ -208,7 +208,7 @@ body.theme-img .fleet,body.theme-img details.log{background:rgba(251,248,240,.93
        ・配置はタップで仮置き →［回転］→［確定］、攻撃はタップで狙う →［撃つ］
        ・設定は ⚙。戦績と設定は localStorage（名前は battleship_android_ で始める）
    ====================================================================== */
-const APP_VERSION="1.1.0";
+const APP_VERSION="1.1.1";
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(msg,ms){ const t=$('toast'); t.textContent=msg; t.classList.add('on');
@@ -964,6 +964,7 @@ const RP={rec:null, n:0, timer:null, list:[]};
 #mReplay .rp-ctl button{min-width:44px;min-height:38px;border:1px solid var(--line);border-radius:7px;background:#fff}
 #mReplay .rp-ctl button.on{background:var(--navy);border-color:var(--navy);color:#fff}
 #mReplay .rp-ctl input{width:100%;margin-top:6px}
+#mReplay .rp-ctl select{min-height:38px;border:1px solid var(--line);border-radius:7px;background:#fff;padding:0 6px}
 #mReplay .rp-foot{padding:10px 14px;border-top:1px solid var(--line2);display:flex;gap:8px;justify-content:flex-end}
 #mReplay .rp-foot button{min-height:38px;border:1px solid var(--line);border-radius:7px;background:#fff;padding:0 14px}`;
   const st=document.createElement('style'); st.textContent=css; document.head.appendChild(st);
@@ -981,6 +982,10 @@ const RP={rec:null, n:0, timer:null, list:[]};
           <button data-rp="first" title="最初">⏮</button><button data-rp="prev" title="1手戻る">◀</button>
           <button data-rp="play" id="rpPlay" title="自動で進める">自動再生</button>
           <button data-rp="next" title="1手進む">▶</button><button data-rp="last" title="最後">⏭</button>
+          <select id="rpSpeed" title="自動再生の速さ（1手あたり）">
+            <option value="3000">とてもゆっくり（3秒）</option><option value="2000">ゆっくり（2秒）</option>
+            <option value="1000">ふつう（1秒）</option><option value="500">速め（0.5秒）</option>
+          </select>
           <input type="range" id="rpRange" min="0" value="0">
         </div>
       </div>
@@ -1001,6 +1006,12 @@ const RP={rec:null, n:0, timer:null, list:[]};
     RP.go(a==='first'?0 : a==='prev'?RP.n-1 : a==='next'?RP.n+1 : L);
   });
   document.getElementById('rpRange').oninput=e=>{ RP.auto(false); RP.go(+e.target.value); };
+  // 自動再生の速さ（v1.3.1／スマホ版 v1.1.1）。選んだものを覚える。再生中に変えてもそのまま続く
+  const sp=document.getElementById('rpSpeed');
+  try{ const v=localStorage.getItem('battleship_replay_speed'); if(v && sp.querySelector('option[value="'+v+'"]')) sp.value=v; else sp.value='1000'; }
+  catch(e){ sp.value='1000'; }
+  sp.onchange=()=>{ try{ localStorage.setItem('battleship_replay_speed', sp.value); }catch(e){}
+    if(RP.timer) RP.auto(true, true); };
   document.getElementById('rpClose').onclick=()=>RP.close();
   document.getElementById('rpBack').onclick=()=>RP.listView();
 })();
@@ -1065,12 +1076,13 @@ RP.go=function(n){
   }
   document.getElementById('rpCap').textContent=cap;
 };
-RP.auto=function(on){
+RP.speed=function(){ return Math.max(100, +document.getElementById('rpSpeed').value || 1000); };
+RP.auto=function(on, keep){
   clearInterval(RP.timer); RP.timer=null;
   const b=document.getElementById('rpPlay');
   if(on && RP.rec){
-    if(RP.n>=RP.rec.shots.length) RP.go(0);
-    RP.timer=setInterval(()=>{ if(RP.n>=RP.rec.shots.length){ RP.auto(false); return; } RP.go(RP.n+1); }, 450);
+    if(!keep && RP.n>=RP.rec.shots.length) RP.go(0);
+    RP.timer=setInterval(()=>{ if(RP.n>=RP.rec.shots.length){ RP.auto(false); return; } RP.go(RP.n+1); }, RP.speed());
   }
   if(b){ b.classList.toggle('on', !!RP.timer); b.textContent=RP.timer?'止める':'自動再生'; }
 };
