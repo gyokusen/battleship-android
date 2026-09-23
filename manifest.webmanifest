@@ -1,0 +1,18 @@
+{
+  "name": "バトルシップ",
+  "short_name": "バトルシップ",
+  "description": "海戦ゲーム バトルシップ（スマホ版）。相手の艦隊を先に全部沈めたら勝ち",
+  "lang": "ja",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F6F1E4",
+  "theme_color": "#1F4E79",
+  "icons": [
+    { "src": "icon/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
+      "purpose": "maskable" }
+  ]
+}
