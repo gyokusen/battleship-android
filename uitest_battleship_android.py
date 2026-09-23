@@ -53,10 +53,10 @@ with sync_playwright() as p:
     pg.wait_for_timeout(300)
 
     print("[起動]")
-    check("版が出る", pg.inner_text("#ver") == "v1.0.0", pg.inner_text("#ver"))
+    check("版が出る", pg.inner_text("#ver") == "v1.0.1", pg.inner_text("#ver"))
     check("最初は［新しく始める］だけ", pg.locator("#actsIn button").count() == 1)
     w = pg.evaluate("document.querySelector('#bigSlot .c').getBoundingClientRect().width")
-    check("大きい盤のマスが指で押せる大きさ（36px 以上）", w >= 36, w)
+    check("大きい盤のマスが指で押せる大きさ（28px 以上）", w >= 28, w)
     check("横にはみ出さない", pg.evaluate("document.documentElement.scrollWidth<=innerWidth"))
 
     print("[⚙]")
@@ -88,6 +88,23 @@ with sync_playwright() as p:
     pg.tap("#actsIn button[data-a=auto]")
     check("おまかせで5隻そろい対戦へ", pg.evaluate("G.grids[1].ships.length") == 5 and pg.evaluate("G.phase") == "play")
     check("自分の番は大きい盤が相手の盤", pg.evaluate("document.querySelector('#bigSlot .grid').id") == "grid2")
+
+    print("[並びと大きさ（v1.0.1）]")
+    heads = pg.evaluate("[...document.querySelectorAll('#fleets .fleet h3')].map(e=>e.textContent)")
+    check("右の欄は相手の艦が上", heads == ["撃沈した相手の艦", "自分の艦隊"], heads)
+    for vw, vh in ((412, 915), (360, 740), (393, 852)):
+        pg.set_viewport_size({"width": vw, "height": vh})
+        pg.wait_for_timeout(80)
+        pg.evaluate("scrollTo(0,0)")
+        r = pg.evaluate("""()=>{const f=document.querySelector('#fleets').getBoundingClientRect();
+            const a=document.getElementById('acts').getBoundingClientRect();
+            const c=document.querySelector('#bigSlot .c').getBoundingClientRect().width;
+            return {bottom:Math.round(f.bottom), acts:Math.round(a.top), cell:Math.round(c),
+                    wide:document.documentElement.scrollWidth<=innerWidth};}""")
+        check("%dx%d：相手の艦の欄が操作帯に隠れない（マス %dpx）" % (vw, vh, r["cell"]),
+              r["bottom"] <= r["acts"] and r["wide"] and r["cell"] >= 22, r)
+    pg.set_viewport_size({"width": 412, "height": 915})
+    pg.wait_for_timeout(80)
 
     print("[攻撃]")
     check("狙う前は［撃つ］が押せない", pg.is_disabled("#actsIn button[data-a=fire]"))

@@ -46,8 +46,9 @@ main{flex:1;padding:8px 8px 0}
 .slot-head{display:flex;align-items:baseline;gap:8px;margin:4px 2px 4px}
 .slot-head b{font-size:14px}
 .slot-head span{font-size:12px;color:var(--sub)}
-#bigSlot{--cell:calc((min(100vw, 560px) - 16px - 20px) / 10)}
+#bigSlot{--cell:min(34px, calc((min(100vw, 560px) - 16px - 20px) / 10))}  /* 高さに収まらないときは fitBoard() が縮める */
 #smallSlot{--cell:17px}
+#bigSlot .grid{width:max-content;margin:0 auto}   /* 縮めたときは真ん中に */
 .grid{display:grid;grid-template-columns:20px repeat(10,var(--cell));grid-template-rows:18px repeat(10,var(--cell));
   user-select:none;-webkit-user-select:none}
 #smallSlot .grid{grid-template-columns:14px repeat(10,var(--cell));grid-template-rows:11px repeat(10,var(--cell))}
@@ -70,14 +71,14 @@ body:not(.theme-img) .grid .c.sunk{background:#5A1F1A !important}
 .grid .c.pv.ng{background:#E1A09A !important;outline-color:var(--err)}
 .grid .c.aim{outline:3px solid #F0B400;outline-offset:-3px;background:#F6D98B !important}
 .grid .c.last{box-shadow:inset 0 0 0 2px #F0B400}
-#smallWrap{display:flex;gap:10px;align-items:flex-start;margin-top:10px}
+#smallWrap{display:flex;gap:10px;align-items:flex-start;margin-top:6px}
 #smallWrap .fleets{flex:1;min-width:0}
 
 /* ---- 艦隊 ---- */
-.fleet{border:1px solid var(--line);border-radius:7px;background:var(--panel);padding:6px 8px;margin-bottom:6px}
+.fleet{border:1px solid var(--line);border-radius:7px;background:var(--panel);padding:4px 8px;margin-bottom:5px}
 .fleet h3{margin:0 0 3px;font-size:11px;color:var(--sub);font-weight:400}
 .fleet ul{list-style:none;margin:0;padding:0}
-.fleet li{display:flex;align-items:center;gap:6px;font-size:12px;padding:1px 0}
+.fleet li{display:flex;align-items:center;gap:6px;font-size:12px;line-height:1.3;padding:0}
 .fleet .nm{width:42px}
 .fleet .pips{display:flex;gap:2px}
 .fleet .pips i{width:9px;height:9px;border-radius:2px;background:var(--ship);display:block}
@@ -207,7 +208,7 @@ body.theme-img .fleet,body.theme-img details.log{background:rgba(251,248,240,.93
        ・配置はタップで仮置き →［回転］→［確定］、攻撃はタップで狙う →［撃つ］
        ・設定は ⚙。戦績と設定は localStorage（名前は battleship_android_ で始める）
    ====================================================================== */
-const APP_VERSION="1.0.0";
+const APP_VERSION="1.0.1";
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(msg,ms){ const t=$('toast'); t.textContent=msg; t.classList.add('on');
@@ -667,8 +668,8 @@ function render(){
   $('bigTitle').textContent = G.grids[1] ? t(big) : 'グリッド';
   $('bigWho').textContent = !G.grids[1] ? '' : big===G.human ? '' : '相手：'+G.ai.name;
   $('smallTitle').textContent = G.grids[1] ? t(small) : '';
-  $('fleets').innerHTML = G.grids[1] ? fleetHtml(G.human)+fleetHtml(aiId()) : '';
-  guide(); acts();
+  $('fleets').innerHTML = G.grids[1] ? fleetHtml(aiId())+fleetHtml(G.human) : '';
+  guide(); acts(); fitBoard();
 }
 function fleetHtml(id){
   const g=G.grids[id], mine=id===G.human;
@@ -707,6 +708,30 @@ function guide(){
   }
   g.innerHTML=esc(a)+(b?'<span id="guideSub">'+esc(b)+'</span>':'');
 }
+/* 大きい盤の大きさ：幅いっぱいを基本に、「撃沈した相手の艦」の欄の下端が
+   下の操作帯に隠れない大きさまで縮める（スクロールしなくても見えるように。v1.0.1） */
+let FIT_KEY='';
+function fitBoard(){
+  const slot=$('bigSlot'), fl=$('fleets');
+  // 幅いっぱい（412px で約37px）より一回り小さい 34px を上限にする（v1.0.1 のご要望）
+  const maxCell=Math.min(34, Math.floor((Math.min(innerWidth,560)-16-20)/10));
+  const key=innerWidth+'x'+innerHeight+'/'+(fl.firstChild?1:0);
+  if(key===FIT_KEY) return; FIT_KEY=key;
+  let cell=maxCell;
+  slot.style.setProperty('--cell', cell+'px');
+  if(!fl.firstChild) return;
+  // 測って縮める、を収まるまで（最大4回）。1回目で読みきれないことがあるため
+  for(let i=0;i<4;i++){
+    const actsTop=innerHeight-$('acts').offsetHeight;
+    const bottom=fl.getBoundingClientRect().bottom+window.scrollY;   // いちばん上から見たときの位置
+    const over=Math.ceil(bottom - actsTop + 6);
+    if(over<=0 || cell<=22) break;
+    cell=Math.max(22, cell-Math.max(1, Math.ceil(over/10)));
+    slot.style.setProperty('--cell', cell+'px');
+  }
+}
+addEventListener('resize', ()=>{ FIT_KEY=''; requestAnimationFrame(fitBoard); });
+
 /* 下の操作帯：その場面で押せるものだけを出す */
 function acts(){
   const box=$('actsIn'); let h='';
