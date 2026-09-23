@@ -185,6 +185,8 @@ body.theme-img .fleet,body.theme-img details.log{background:rgba(251,248,240,.93
     <div class="seg" id="segSound"><button data-v="1">入</button><button data-v="0">切</button></div>
     <label for="rngVol">音の大きさ <span id="volVal"></span></label>
     <input type="range" id="rngVol" min="0" max="100" step="5"></div>
+  <div class="row"><label>ヒント（相手の盤に「次に当たりやすいマス」を色の濃さで出す・練習用）</label>
+    <div class="seg" id="segHint"><button data-v="1">入</button><button data-v="0">切</button></div></div>
   <div class="row"><label for="selDelay">相手が撃つまでの間</label>
     <select id="selDelay">
       <option value="0">すぐ</option><option value="400">短め（0.4秒）</option>
@@ -208,7 +210,7 @@ body.theme-img .fleet,body.theme-img details.log{background:rgba(251,248,240,.93
        ・配置はタップで仮置き →［回転］→［確定］、攻撃はタップで狙う →［撃つ］
        ・設定は ⚙。戦績と設定は localStorage（名前は battleship_android_ で始める）
    ====================================================================== */
-const APP_VERSION="1.1.1";
+const APP_VERSION="1.2.0";
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(msg,ms){ const t=$('toast'); t.textContent=msg; t.classList.add('on');
@@ -471,7 +473,7 @@ function makeAI(kind){
 
 
 /* 画面の決まり（PC版の ini の代わり。⚙で変える） */
-CFG={ai_delay_ms:700, ai:'merciless', grid:'1', theme:'std', sound:true, volume:70,
+CFG={ai_delay_ms:700, ai:'merciless', grid:'1', theme:'std', sound:true, volume:70, hint:false,
      view_ms:650};        // 撃った結果を見せてから盤を入れ替えるまでの間
 
 /* ---- 保存（localStorage。ほかのアプリと名前がぶつからないよう接頭辞を付ける） ---- */
@@ -479,7 +481,7 @@ const KEY_PREFS='battleship_android_prefs', KEY_STATS='battleship_android_stats'
 function lsGet(k, d){ try{ const v=JSON.parse(localStorage.getItem(k)||'null'); return v==null?d:v; }catch(e){ return d; } }
 function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 function savePrefs(){ lsSet(KEY_PREFS, {ai:CFG.ai, grid:CFG.grid, theme:CFG.theme, sound:CFG.sound,
-  volume:CFG.volume, ai_delay_ms:CFG.ai_delay_ms}); }
+  volume:CFG.volume, ai_delay_ms:CFG.ai_delay_ms, hint:CFG.hint}); }
 function loadPrefs(){ Object.assign(CFG, lsGet(KEY_PREFS, {})); }
 function stats(){ return lsGet(KEY_STATS, {}); }
 function addResult(ai, win){
@@ -670,6 +672,7 @@ function render(){
   $('bigWho').textContent = !G.grids[1] ? '' : big===G.human ? '' : '相手：'+G.ai.name;
   $('smallTitle').textContent = G.grids[1] ? t(small) : '';
   $('fleets').innerHTML = G.grids[1] ? fleetHtml(aiId())+fleetHtml(G.human) : '';
+  if(G.grids[1]) hintPaint(aiId(), CFG.hint && G.phase==='play' && G.turn===G.human && !G.busy, G.ai && G.ai.kind);
   guide(); acts(); fitBoard();
 }
 function fleetHtml(id){
@@ -845,7 +848,7 @@ function fmtAt(iso){
 function segSet(id, v){ document.querySelectorAll('#'+id+' button').forEach(b=>b.classList.toggle('on', b.dataset.v===String(v))); }
 function openSet(){
   $('selAi').value=CFG.ai; segSet('segGrid', CFG.grid); segSet('segTheme', CFG.theme);
-  segSet('segSound', CFG.sound?'1':'0'); $('rngVol').value=CFG.volume; $('volVal').textContent=CFG.volume;
+  segSet('segSound', CFG.sound?'1':'0'); segSet('segHint', CFG.hint?'1':'0'); $('rngVol').value=CFG.volume; $('volVal').textContent=CFG.volume;
   $('selDelay').value=String(CFG.ai_delay_ms); showStats(); $('mSet').classList.add('on');
 }
 function applySound(){ SND.on=!!CFG.sound; SND.vol=Math.max(0,Math.min(100,+CFG.volume))/100; }
@@ -882,6 +885,8 @@ function bind(){
   $('selDelay').onchange=()=>{ CFG.ai_delay_ms=+$('selDelay').value; savePrefs(); };
   document.querySelectorAll('#segGrid button').forEach(b=>b.onclick=()=>{ CFG.grid=b.dataset.v; segSet('segGrid',CFG.grid); savePrefs(); });
   document.querySelectorAll('#segTheme button').forEach(b=>b.onclick=()=>{ CFG.theme=b.dataset.v; segSet('segTheme',CFG.theme); setTheme(CFG.theme); savePrefs(); });
+  document.querySelectorAll('#segHint button').forEach(b=>b.onclick=()=>{
+    CFG.hint=b.dataset.v==='1'; segSet('segHint',b.dataset.v); savePrefs(); render(); });
   document.querySelectorAll('#segSound button').forEach(b=>b.onclick=()=>{
     CFG.sound=b.dataset.v==='1'; segSet('segSound',b.dataset.v); applySound(); savePrefs(); if(CFG.sound) play('miss'); });
   $('rngVol').oninput=()=>{ CFG.volume=+$('rngVol').value; $('volVal').textContent=CFG.volume; applySound(); };
@@ -1086,6 +1091,84 @@ RP.auto=function(on, keep){
   }
   if(b){ b.classList.toggle('on', !!RP.timer); b.textContent=RP.timer?'止める':'自動再生'; }
 };
+
+/* ======================================================================
+   ヒント：「次に当たりやすいマス」（PC版 v1.4.0 ／ スマホ版 v1.2.0 で共通の部品）
+     相手の盤で、残っている艦が置ける並べ方をすべて数え、各マスに重みを足す。
+     使うのは「あなたに見えている情報」だけ（はずれ・命中・沈めた艦）。本当の配置は見ない。
+       ・まだ沈んでいない命中を含む並べ方は、含む数に応じて大きく重くする（沈めにいく手が濃くなる）
+       ・相手が FairPlay / Merciless なら、沈めた艦の周り（斜めも）に掛かる並べ方を薄くする
+         （この2つは艦をほとんど隣り合わせないため。Random は隣り合わせることがある）
+   ====================================================================== */
+const HINT_HIT_BOOST=30, HINT_NEAR_SUNK=0.15;
+function hintMap(g, aiKind){
+  const sunkCells=new Set(), left=[];
+  for(const d of SHIPS){
+    const s=g.ships.find(v=>v.kind===d.kind);
+    if(s && g.isSunk(s)) s.cells.forEach(c=>sunkCells.add(c.x+','+c.y));
+    else left.push(d.size);
+  }
+  const isSunk=(x,y)=>sunkCells.has(x+','+y);
+  const nearSunk=(x,y)=>{ for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++)
+      if((dx||dy) && isSunk(x+dx,y+dy)) return true; return false; };
+  const avoidAdj = aiKind==='fairplay' || aiKind==='merciless';
+  const w=[]; for(let x=0;x<=N;x++) w.push(new Array(N+1).fill(0));
+  for(const L of left){
+    for(const dir of [H,V]){
+      for(let x=1;x<=N;x++) for(let y=1;y<=N;y++){
+        const ex=x+(dir===H?L-1:0), ey=y+(dir===V?L-1:0);
+        if(ex>N || ey>N) continue;
+        let ok=true, hits=0, near=false;
+        for(let i=0;i<L;i++){
+          const cx=x+(dir===H?i:0), cy=y+(dir===V?i:0), st=g.st(cx,cy);
+          if(st===MISS || isSunk(cx,cy)){ ok=false; break; }
+          if(st===HIT) hits++;
+          if(avoidAdj && nearSunk(cx,cy)) near=true;
+        }
+        if(!ok) continue;
+        let wt = hits ? Math.pow(HINT_HIT_BOOST, hits) : 1;
+        if(near) wt*=HINT_NEAR_SUNK;
+        for(let i=0;i<L;i++){
+          const cx=x+(dir===H?i:0), cy=y+(dir===V?i:0);
+          if(g.st(cx,cy)===UNKNOWN) w[cx][cy]+=wt;
+        }
+      }
+    }
+  }
+  let max=0, sum=0, best=[];
+  for(let x=1;x<=N;x++) for(let y=1;y<=N;y++){
+    const v=w[x][y]; sum+=v;
+    if(v>max+1e-9){ max=v; best=[{x,y}]; } else if(v>0 && Math.abs(v-max)<1e-9) best.push({x,y});
+  }
+  return {w, max, sum, best};
+}
+/* 盤に塗る。id＝相手の盤の番号、on＝塗るかどうか */
+function hintPaint(id, on, aiKind){
+  const g=G.grids[id];
+  const m = (on && g) ? hintMap(g, aiKind) : null;
+  for(let x=1;x<=N;x++) for(let y=1;y<=N;y++){
+    const el=document.getElementById('c'+id+'_'+x+'_'+y); if(!el) continue;
+    const v = m ? m.w[x][y] : 0;
+    if(m && v>0 && m.max>0){
+      el.classList.add('heat');
+      el.style.setProperty('--h', (0.08 + 0.72*v/m.max).toFixed(3));
+      el.classList.toggle('best', m.best.some(b=>b.x===x && b.y===y));
+      el.dataset.hint = Math.round(v*100/m.sum)+'%';
+    }else{
+      el.classList.remove('heat','best');
+      el.style.removeProperty('--h');
+      delete el.dataset.hint;
+    }
+  }
+  return m;
+}
+(function(){
+  const st=document.createElement('style');
+  st.textContent=`.grid .c.heat{box-shadow:inset 0 0 0 100px rgba(235,110,0,var(--h))}
+.grid .c.heat.best{outline:3px dashed #B03A00;outline-offset:-3px}
+.grid .c.heat.aim{box-shadow:none}`;
+  document.head.appendChild(st);
+})();
 
 bind();
 loadPrefs(); applySound();
