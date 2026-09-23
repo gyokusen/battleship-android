@@ -191,7 +191,7 @@ body.theme-img .fleet,body.theme-img details.log{background:rgba(251,248,240,.93
       <option value="700">ふつう（0.7秒）</option><option value="1200">ゆっくり（1.2秒）</option>
     </select></div>
   <div class="row"><label>戦績</label><div id="statsBox"></div></div>
-  <div class="btns"><button class="danger" id="bClear">戦績を消す</button></div>
+  <div class="btns"><button id="bHistory">過去の対戦を見る</button><button class="danger" id="bClear">戦績を消す</button></div>
   <p class="note" style="margin-top:10px">バトルシップ スマホ版 <span id="ver2"></span>。記録と設定はこのスマホのブラウザの中にだけ残ります。</p>
   <div class="btns"><button id="bClose">閉じる</button><button class="primary" id="bNew2">新しく始める</button></div>
 </div></div>
@@ -208,7 +208,7 @@ body.theme-img .fleet,body.theme-img details.log{background:rgba(251,248,240,.93
        ・配置はタップで仮置き →［回転］→［確定］、攻撃はタップで狙う →［撃つ］
        ・設定は ⚙。戦績と設定は localStorage（名前は battleship_android_ で始める）
    ====================================================================== */
-const APP_VERSION="1.0.1";
+const APP_VERSION="1.1.0";
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(msg,ms){ const t=$('toast'); t.textContent=msg; t.classList.add('on');
@@ -608,6 +608,7 @@ function newGame(){
   G.placeIdx=0; G.preview=null; G.aim=null; G.turn=1; G.busy=false; G.view='own';
   G.shots={1:0,2:0}; G.hits={1:0,2:0}; G.last={1:null,2:null}; G.started=new Date();
   G.ai.placeAll(G.grids[aiId()]);
+  recStart();                  // 対戦の記録を始める（v1.1.0）
   G.phase='place';
   $('log').innerHTML=''; G.logN=0;
   log('新しい対戦：あなた＝グリッド'+G.human+'、相手＝'+G.ai.name, 'sys');
@@ -779,6 +780,7 @@ function autoPlace(){
 function resetPlace(){ G.grids[G.human]=new Grid(G.human); G.placeIdx=0; G.preview=null; log('配置をやり直します'); render(); }
 function startPlay(){
   G.phase='play'; G.turn=1; G.aim=null;
+  recShips();
   log('全艦の配置が終わりました。グリッド1（'+whoName(1)+'）から攻撃します','sys');
   if(G.turn===G.human){ G.view='enemy'; render(); }
   else{ G.view='own'; render(); aiTurn(); }
@@ -786,6 +788,7 @@ function startPlay(){
 
 /* ---- 攻撃 ---- */
 function fire(shooter, p){
+  recShot(shooter, p);
   const target=G.grids[3-shooter], r=target.tryHit(p.x,p.y);
   G.shots[shooter]++; G.last[shooter]=p; G.aim=null;
   const who=whoName(shooter);
@@ -819,8 +822,23 @@ function gameOver(winner){
   const win=winner===G.human;
   log('対戦終了：'+(win?'あなたの勝ち':'相手（'+G.ai.name+'）の勝ち'),'sys');
   addResult(G.ai.kind, win);
+  saveGame(win);
   later(()=>play(win?'win':'lose'), 1300);
   render();
+}
+
+/* ---- 過去の対戦（v1.1.0）：スマホの中に直近100局 ---- */
+const KEY_GAMES='battleship_android_games', GAMES_MAX=100;
+function saveGame(win){
+  if(!REC) return;
+  REC.win=win;
+  const a=lsGet(KEY_GAMES, []); a.unshift(REC); a.length=Math.min(a.length, GAMES_MAX);
+  lsSet(KEY_GAMES, a); REC=null;
+}
+function fmtAt(iso){
+  const d=new Date(iso); if(isNaN(d)) return '';
+  const z=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())+' '+z(d.getHours())+':'+z(d.getMinutes());
 }
 
 /* ---------------- ⚙ ---------------- */
@@ -868,8 +886,194 @@ function bind(){
     CFG.sound=b.dataset.v==='1'; segSet('segSound',b.dataset.v); applySound(); savePrefs(); if(CFG.sound) play('miss'); });
   $('rngVol').oninput=()=>{ CFG.volume=+$('rngVol').value; $('volVal').textContent=CFG.volume; applySound(); };
   $('rngVol').onchange=()=>{ savePrefs(); play('hit'); };
-  $('bClear').onclick=()=>{ if(!confirm('戦績をすべて消しますか？')) return; lsSet(KEY_STATS,{}); showStats(); toast('戦績を消しました'); };
+  $('bClear').onclick=()=>{ if(!confirm('戦績をすべて消しますか？（過去の対戦の記録も消えます）')) return;
+    lsSet(KEY_STATS,{}); lsSet(KEY_GAMES,[]); showStats(); toast('戦績を消しました'); };
+  $('bHistory').onclick=()=>{
+    $('mSet').classList.remove('on');
+    RP.open(lsGet(KEY_GAMES, []).map(r=>({win:!!r.win,
+      title:fmtAt(r.at)+'　対 '+(AI_NAMES[r.ai]||r.ai),
+      sub:'グリッド'+r.human+(r.human===1?'（先攻）':'（後攻）')+'　全 '+r.shots.length+' 手',
+      load:async()=>r})));
+  };
 }
+
+/* ======================================================================
+   対戦の記録と再生（PC版 v1.3.0 ／ スマホ版 v1.1.0 で共通の部品）
+     記録：1局ごとに JSON 1つ
+       {v:1, ai, human, at, ships:{1:[{kind,x,y,dir}…],2:[…]}, shots:[[撃った側,x,y]…], win}
+     再生：記録から盤を作り直し、n 手目まで撃ち直して見せる（ゲームの Grid をそのまま使う）
+     画面：RP.open(一覧) で窓を出す。一覧は [{title, sub, load: async()=>記録}]
+   ====================================================================== */
+let REC=null;
+function recStart(){
+  REC={v:1, ai:G.ai.kind, human:G.human, at:new Date().toISOString(), ships:{1:[],2:[]}, shots:[], win:null};
+}
+function recShips(){
+  if(!REC) return;
+  for(const id of [1,2]) REC.ships[id]=G.grids[id].ships.map(s=>({kind:s.kind,x:s.x,y:s.y,dir:s.dir}));
+}
+function recShot(shooter, p){ if(REC) REC.shots.push([shooter,p.x,p.y]); }
+
+function replayState(rec, n){
+  const gs={1:new Grid(1), 2:new Grid(2)};
+  for(const id of [1,2]) (rec.ships[id]||[]).forEach(s=>
+    gs[id].add(SHIPS.find(d=>d.kind===s.kind), s.x, s.y, s.dir));
+  let last=null;
+  for(let i=0; i<n && i<rec.shots.length; i++){
+    const [sh,x,y]=rec.shots[i];
+    const r=gs[3-sh].tryHit(x,y);
+    last={sh, x, y, result:r.result, ship:r.ship};
+  }
+  return {gs, last};
+}
+
+const RP={rec:null, n:0, timer:null, list:[]};
+(function(){
+  const css=`
+#mReplay{position:fixed;inset:0;z-index:55;background:rgba(36,31,20,.45);display:none;
+  align-items:center;justify-content:center;padding:8px}
+#mReplay.on{display:flex}
+#mReplay .rp{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 12px 40px rgba(0,0,0,.3);width:760px;max-width:100%;max-height:calc(100vh - 16px);
+  display:flex;flex-direction:column;overflow:hidden}
+#mReplay .rp-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line2)}
+#mReplay .rp-head b{color:var(--navy);font-size:15px}
+#mReplay .rp-head .sp{flex:1}
+#mReplay .rp-body{flex:1;overflow:auto;padding:10px 14px}
+#mReplay .rp-list{list-style:none;margin:0;padding:0}
+#mReplay .rp-list li{display:flex;gap:10px;align-items:center;padding:9px 8px;border-bottom:1px solid var(--line2);cursor:pointer}
+#mReplay .rp-list li:hover{background:#fff}
+#mReplay .rp-list .w{font-weight:700;width:3em}
+#mReplay .rp-list .w.win{color:var(--ok,#2C6E3F)} #mReplay .rp-list .w.lose{color:var(--err,#A22C2C)}
+#mReplay .rp-list .s{color:var(--sub);font-size:12px}
+#mReplay .rp-list li.none{cursor:default;color:var(--sub)}
+#mReplay .rp-boards{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+#mReplay .rp-b h4{margin:0 0 4px;font-size:12.5px}
+#mReplay .rp-g{--rc:min(26px, calc((min(100vw, 760px) - 90px) / 20));display:grid;
+  grid-template-columns:14px repeat(10,var(--rc));grid-template-rows:14px repeat(10,var(--rc))}
+#mReplay .rp-g i{display:flex;align-items:center;justify-content:center;font-style:normal;font-size:9px;color:var(--sub)}
+#mReplay .rp-g b{background:var(--sea);border:1px solid #fff;display:flex;align-items:center;justify-content:center;
+  font-size:calc(var(--rc) * .55);line-height:1}
+#mReplay .rp-g b.sh{background:var(--ship)}
+#mReplay .rp-g b.ms::after{content:"";width:28%;height:28%;border-radius:50%;background:var(--miss)}
+#mReplay .rp-g b.ht{background:#8E4A43;color:#fff} #mReplay .rp-g b.ht::after{content:"×"}
+#mReplay .rp-g b.sk{background:#5A1F1A;color:#F3C9C3}
+#mReplay .rp-g b.lt{box-shadow:inset 0 0 0 3px #F0B400}
+#mReplay .rp-cap{margin:10px 0 6px;font-weight:700;color:var(--navy);min-height:1.5em;text-align:center}
+#mReplay .rp-ctl{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;align-items:center}
+#mReplay .rp-ctl button{min-width:44px;min-height:38px;border:1px solid var(--line);border-radius:7px;background:#fff}
+#mReplay .rp-ctl button.on{background:var(--navy);border-color:var(--navy);color:#fff}
+#mReplay .rp-ctl input{width:100%;margin-top:6px}
+#mReplay .rp-foot{padding:10px 14px;border-top:1px solid var(--line2);display:flex;gap:8px;justify-content:flex-end}
+#mReplay .rp-foot button{min-height:38px;border:1px solid var(--line);border-radius:7px;background:#fff;padding:0 14px}`;
+  const st=document.createElement('style'); st.textContent=css; document.head.appendChild(st);
+  const m=document.createElement('div'); m.id='mReplay';
+  m.innerHTML=`<div class="rp">
+    <div class="rp-head"><b id="rpTitle">過去の対戦</b><span class="sp"></span>
+      <button id="rpBack" hidden>一覧へ</button></div>
+    <div class="rp-body">
+      <ul class="rp-list" id="rpList"></ul>
+      <div id="rpView" hidden>
+        <div class="rp-boards"><div class="rp-b"><h4 id="rpH1"></h4><div class="rp-g" id="rpG1"></div></div>
+          <div class="rp-b"><h4 id="rpH2"></h4><div class="rp-g" id="rpG2"></div></div></div>
+        <div class="rp-cap" id="rpCap"></div>
+        <div class="rp-ctl">
+          <button data-rp="first" title="最初">⏮</button><button data-rp="prev" title="1手戻る">◀</button>
+          <button data-rp="play" id="rpPlay" title="自動で進める">自動再生</button>
+          <button data-rp="next" title="1手進む">▶</button><button data-rp="last" title="最後">⏭</button>
+          <input type="range" id="rpRange" min="0" value="0">
+        </div>
+      </div>
+    </div>
+    <div class="rp-foot"><button id="rpClose">閉じる</button></div></div>`;
+  document.body.appendChild(m);
+  const grid=id=>{ let h='<i></i>'; for(let x=1;x<=N;x++) h+='<i>'+COLS[x-1]+'</i>';
+    for(let y=1;y<=N;y++){ h+='<i>'+y+'</i>'; for(let x=1;x<=N;x++) h+='<b id="rp'+id+'_'+x+'_'+y+'"></b>'; } return h; };
+  document.getElementById('rpG1').innerHTML=grid(1);
+  document.getElementById('rpG2').innerHTML=grid(2);
+  m.addEventListener('click', e=>{
+    if(e.target===m){ RP.close(); return; }
+    const li=e.target.closest('#rpList li[data-i]'); if(li){ RP.show(+li.dataset.i); return; }
+    const b=e.target.closest('[data-rp]'); if(!b) return;
+    const a=b.dataset.rp, L=RP.rec?RP.rec.shots.length:0;
+    if(a==='play'){ RP.auto(!RP.timer); return; }
+    RP.auto(false);
+    RP.go(a==='first'?0 : a==='prev'?RP.n-1 : a==='next'?RP.n+1 : L);
+  });
+  document.getElementById('rpRange').oninput=e=>{ RP.auto(false); RP.go(+e.target.value); };
+  document.getElementById('rpClose').onclick=()=>RP.close();
+  document.getElementById('rpBack').onclick=()=>RP.listView();
+})();
+
+RP.open=function(list){
+  RP.list=list||[];
+  document.getElementById('mReplay').classList.add('on');
+  RP.listView();
+};
+RP.close=function(){ RP.auto(false); document.getElementById('mReplay').classList.remove('on'); };
+RP.listView=function(){
+  RP.auto(false); RP.rec=null;
+  document.getElementById('rpTitle').textContent='過去の対戦（'+RP.list.length+'局）';
+  document.getElementById('rpBack').hidden=true;
+  document.getElementById('rpView').hidden=true;
+  const ul=document.getElementById('rpList'); ul.hidden=false;
+  ul.innerHTML = RP.list.length ? RP.list.map((it,i)=>
+      '<li data-i="'+i+'"><span class="w '+(it.win?'win':'lose')+'">'+(it.win?'勝ち':'負け')+'</span>'
+      +'<span>'+esc(it.title)+'<br><span class="s">'+esc(it.sub||'')+'</span></span></li>').join('')
+    : '<li class="none">まだ記録がありません。1局最後まで戦うと、ここに残ります（v1.3.0／スマホ版 v1.1.0 から）。</li>';
+};
+RP.show=async function(i){
+  const it=RP.list[i]; if(!it) return;
+  let rec=null;
+  try{ rec=await it.load(); }catch(e){ rec=null; }
+  if(!rec || !rec.shots){ toast('この対戦は配置と手順を記録していません（古い版の対戦です）'); return; }
+  RP.rec=rec;
+  document.getElementById('rpTitle').textContent=it.title;
+  document.getElementById('rpBack').hidden=false;
+  document.getElementById('rpList').hidden=true;
+  document.getElementById('rpView').hidden=false;
+  const who=id=>(id===rec.human?'あなた':'相手（'+(AI_NAMES[rec.ai]||rec.ai)+'）')+'（グリッド'+id+(id===1?'・先攻':'・後攻')+'）';
+  document.getElementById('rpH1').textContent=who(1);
+  document.getElementById('rpH2').textContent=who(2);
+  const r=document.getElementById('rpRange'); r.max=rec.shots.length;
+  RP.go(0);
+};
+RP.go=function(n){
+  const rec=RP.rec; if(!rec) return;
+  n=Math.max(0, Math.min(rec.shots.length, n)); RP.n=n;
+  const {gs,last}=replayState(rec, n);
+  for(const id of [1,2]){
+    const g=gs[id];
+    for(let x=1;x<=N;x++) for(let y=1;y<=N;y++){
+      const el=document.getElementById('rp'+id+'_'+x+'_'+y), s=g.shipAt(x,y), st=g.st(x,y);
+      let c=s?'sh':'';
+      if(st===MISS) c='ms';
+      if(st===HIT) c = (s && g.isSunk(s)) ? 'ht sk' : 'ht';
+      if(last && 3-last.sh===id && last.x===x && last.y===y) c+=' lt';
+      el.className=c;
+    }
+  }
+  document.getElementById('rpRange').value=n;
+  const L=rec.shots.length;
+  let cap;
+  if(!last) cap='0 / '+L+' 手：配置のようす（両方の艦を見せています）';
+  else{
+    const w=last.sh===rec.human?'あなた':'相手';
+    const res = last.result==='miss' ? 'はずれ' : last.result==='sunk' ? '命中 … '+last.ship.name+'を撃沈！' : '命中（'+last.ship.name+'）';
+    cap=n+' / '+L+' 手：'+w+' → '+COLS[last.x-1]+last.y+' '+res;
+    if(n===L) cap+='　【'+(rec.win?'あなたの勝ち':'相手の勝ち')+'】';
+  }
+  document.getElementById('rpCap').textContent=cap;
+};
+RP.auto=function(on){
+  clearInterval(RP.timer); RP.timer=null;
+  const b=document.getElementById('rpPlay');
+  if(on && RP.rec){
+    if(RP.n>=RP.rec.shots.length) RP.go(0);
+    RP.timer=setInterval(()=>{ if(RP.n>=RP.rec.shots.length){ RP.auto(false); return; } RP.go(RP.n+1); }, 450);
+  }
+  if(b){ b.classList.toggle('on', !!RP.timer); b.textContent=RP.timer?'止める':'自動再生'; }
+};
 
 bind();
 loadPrefs(); applySound();

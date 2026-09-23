@@ -53,7 +53,7 @@ with sync_playwright() as p:
     pg.wait_for_timeout(300)
 
     print("[起動]")
-    check("版が出る", pg.inner_text("#ver") == "v1.0.1", pg.inner_text("#ver"))
+    check("版が出る", pg.inner_text("#ver") == "v1.1.0", pg.inner_text("#ver"))
     check("最初は［新しく始める］だけ", pg.locator("#actsIn button").count() == 1)
     w = pg.evaluate("document.querySelector('#bigSlot .c').getBoundingClientRect().width")
     check("大きい盤のマスが指で押せる大きさ（28px 以上）", w >= 28, w)
@@ -136,6 +136,31 @@ with sync_playwright() as p:
     check("相手の音は小さめ", any(l["quiet"] for l in pg.evaluate("SND.log")))
     pg.screenshot(path=str(OUT / "android_over_std.png"))
 
+    print("[過去の対戦（v1.1.0）]")
+    final = pg.evaluate("""()=>[1,2].map(id=>{const g=G.grids[id];let s='';for(let y=1;y<=10;y++)for(let x=1;x<=10;x++){
+        const sh=g.shipAt(x,y);s+=g.st(x,y)===4?(sh&&g.isSunk(sh)?'S':'H'):g.st(x,y)===3?'m':(sh?'o':'.');}return s;})""")
+    total = pg.evaluate("G.shots[1]+G.shots[2]")
+    games = pg.evaluate("JSON.parse(localStorage.getItem('battleship_android_games'))")
+    check("1局の記録が残る（配置10隻・手順）", len(games) == 1 and len(games[0]["shots"]) == total
+          and len(games[0]["ships"]["1"]) == 5 and len(games[0]["ships"]["2"]) == 5, (len(games), total))
+    pg.tap("#bSet"); pg.tap("#bHistory"); pg.wait_for_timeout(150)
+    check("⚙から一覧が開く（1局）", pg.is_visible("#mReplay") and pg.locator("#rpList li[data-i]").count() == 1)
+    pg.tap('#rpList li[data-i="0"]'); pg.wait_for_timeout(150)
+    check("0手目は両方の艦が見える", pg.locator("#mReplay .rp-g b.sh").count() == 34)
+    pg.tap("[data-rp=last]")
+    rp = pg.evaluate("""()=>[1,2].map(id=>{let s='';for(let y=1;y<=10;y++)for(let x=1;x<=10;x++){
+        const c=document.getElementById('rp'+id+'_'+x+'_'+y).className;
+        s+=c.includes('sk')?'S':c.includes('ht')?'H':c.includes('ms')?'m':c.includes('sh')?'o':'.';}return s;})""")
+    check("再生の最後が実際の最後と1マスも違わない", rp == final)
+    check("手数の表示", pg.inner_text("#rpCap").startswith("%d / %d" % (total, total)), pg.inner_text("#rpCap"))
+    pg.tap("[data-rp=first]"); pg.tap("[data-rp=next]")
+    check("1手ずつ進める", pg.inner_text("#rpCap").startswith("1 / "))
+    rw = pg.evaluate("document.querySelector('#mReplay .rp').getBoundingClientRect().width")
+    check("再生の窓がスマホの幅に収まる", rw <= 412 and pg.evaluate("document.documentElement.scrollWidth<=innerWidth"), rw)
+    pg.screenshot(path=str(OUT / "android_replay.png"))
+    pg.tap("#rpClose")
+    check("閉じる", not pg.is_visible("#mReplay"))
+
     print("[画像表示]")
     pg.tap("#bSet")
     pg.tap("#segTheme button[data-v='img']")
@@ -165,9 +190,12 @@ with sync_playwright() as p:
           pg.evaluate("CFG.theme") == "img" and pg.evaluate("CFG.sound") is False and pg.evaluate("CFG.ai_delay_ms") == 0)
     st = pg.evaluate("JSON.parse(localStorage.getItem('battleship_android_stats'))")
     check("戦績が2件残る", sum(v["win"] + v["lose"] for v in st.values()) == 2, st)
+    check("過去の対戦が2局（新しい順）", len(pg.evaluate("JSON.parse(localStorage.getItem('battleship_android_games'))")) == 2)
     pg.tap("#bSet")
     pg.tap("#bClear")
     check("戦績を消せる", pg.evaluate("localStorage.getItem('battleship_android_stats')") == "{}")
+    check("過去の対戦も消える", pg.evaluate("localStorage.getItem('battleship_android_games')") == "[]")
+    games2 = None
 
     print("[広い画面]")
     pg.set_viewport_size({"width": 1000, "height": 900})
